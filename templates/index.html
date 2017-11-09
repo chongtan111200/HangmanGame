@@ -1,0 +1,255 @@
+{% extends "bootstrap/base.html" %}
+
+{% block title %}
+  Hangman Game
+{% endblock title %}
+{% block styles %}
+{{ super() }}
+  <link rel = "stylesheet" href="static/style.css?version=3" }}">
+{% endblock %}
+{% block scripts %}
+{{ super() }}
+<script>
+    //the correctly guessed characters, format is {index of the char : char}
+    var guessed_correct_char = {};
+
+    //the missed characters
+    var missed_char = [];
+
+    //each single guessed character by the player
+    var one_guess;
+
+    //the length of the word to guess
+    var len_answer = 0;
+
+    //the misses the user can have
+    var LIVES = 10;
+    
+    //user information, the name, won and lost games
+    var username = null;
+    var games_won = 0;
+    var games_lost = 0;
+
+    //control of the view
+    var game_screen = $("#game");
+    var message_screen = $("#message");
+
+    //game start button and event
+    $(document).ready(function(){
+        //start game button
+        $("button#start").click(iniGame);
+
+        //sign up the user
+        $("button#signup").click(function(){
+            if( $("#name").val().length == 0 || $("#password").val().length ==0){
+		$("#welcome_message").text("Please type in name and password to sign up");
+		return;
+            } 
+            $.post("{{ url_for('signup') }}", {
+                name : $("#name").val(),
+                password : $("#password").val()
+            }, function(data){
+                if(data == "1"){
+                    $("#welcome_message").text("Sign up complete, please start game");
+                }else{
+                    $("#welcome_message").text("User name exists, please log in");
+                }
+            });
+        });
+     });
+    
+    //check if the username/password is stored   
+    function iniGame(){
+
+	username = $("#name").val();
+
+	$.post("{{ url_for('login') }}",{
+        name : $("#name").val(),
+        password : $("#password").val()
+        }, function(data){
+            if(data != "0"){
+ 		games_won = parseInt(data.split(' ')[0]);
+		games_lost = parseInt(data.split(' ')[1]);
+                startGame();
+            }else{
+                $("#welcome_message").text("Invalid username/password, try again or sign up");
+            }
+        });        
+    }
+
+    //start game function updates the view and takes back the length of the answer
+    function startGame(res){
+        $("#img_hang").html('<img id="man"> </img>');
+    
+    
+        //get the length of the answer from the user
+        $.post("{{ url_for("game") }}",{restart : res}, function(data){
+        //show the input form and reset the user guessed information
+        createInputForm();
+	guessed_correct_char = {};
+        missed_char = [];
+        for(var i = 0; i < data.guessed_char.length; i++){
+	    guessed_correct_char[data.guessed_char[i].index] = data.guessed_char[i].ch;
+  	}
+        for(var i = 0; i < data.missed_char.length; i++){
+	    missed_char.push(data.missed_char[i]);
+  	}
+   
+        //get the length of the answe and update the view according to the length
+        len_answer = parseInt(data.len);
+        updateGame(); 
+
+        //show the information of the game 
+        $("#message_fixed").html("<div> Welcome " + username 
+        + ". Your word length is " + len_answer + ". Games won: " 
+        + games_won + ". Games lost: " + games_lost  + " </div>");
+            });   
+    }
+    
+    //updates the view after each guess
+    function updateGame(){
+ 	game_screen.html("");
+        hits = 0;
+   
+        //use * to represent unguessed characters, show the character if guessed  
+	for(var i = 0; i < len_answer; i++){
+ 	    if(guessed_correct_char.hasOwnProperty("" + i) ){
+		hits++;
+	        game_screen.append(" " + guessed_correct_char[i] + " ");
+
+            }else{
+                game_screen.append(" * ");
+            }
+  	}
+        
+        //update miss information and update the image if missed
+        if(missed_char.length == 0){
+	    temp = 0;
+        }else{
+	    $("#img_hang").html('<img id="man"> </img>');
+	    $("#man").attr("src", "/static/man" + missed_char.length + ".png" );
+ 	    temp = missed_char;
+        }
+
+        //update the statistics
+	var lives = LIVES - missed_char.length;
+        message_screen.html("<div>Guessed: " + hits + " , Missed: " + temp + " , Lives: " +  lives + " </div>");
+
+        //end game condition
+	if(hits == len_answer || missed_char.length == LIVES){
+	    var end_game_message = '';
+	    $.post("{{ url_for("end") }}",{
+                hits : hits,
+                misses : missed_char.length,
+                name : username 
+            },function(data){
+	        if(data == '1'){
+                    end_game_message = "won";
+                    games_won++;
+                }else if(data != '0'){
+                    end_game_message = "lost";
+	            games_lost++;
+		    message_screen.append(" The answer is " + data);
+                }
+            message_screen.append("<div>You " + end_game_message + " the game!</div>");
+	    $("#input_form").html('<button type="button" id="restart" class="btn btn-primary" required="required" > Restart </button>');	    
+            });
+
+       }
+    }
+    
+    //create the input form if start button is hit
+    function createInputForm(){
+        $("#input_form").html('<div class="col-xs-4 col-xs-offset-4"> Guess: <input type="text" class="form-control" id="guess" maxlength="1" required> <button type="button" id="guess" class="btn btn-primary"> Submit </button> </div>');
+    }
+
+    //restart button appears after one game is finished
+    $(document).on("click", "button#restart",{ restart : '1' },function(event){
+        startGame(event.data['restart']);
+    }); 
+
+    //when one character is guessed, bind event
+    $(document).on("click", "button#guess",guessChar);
+    $(document).on("keyup", "input#guess",function(e){
+	if(e.keyCode == 13){
+            guessChar();
+        }
+    });
+   
+    //pass the guessed char to server and get the correct index and char
+    function guessChar(){
+        //the input guess        
+        one_guess = $("input#guess").val();
+        $("input#guess").val("");
+        $("#message_input_char").html(
+            "<div>You guessed " + one_guess  +"</div>");
+
+        //check input type, must be English character
+        if(!one_guess.match(/[a-z]{1}/)){
+            message_screen.html("Only one lower case English character is allowed")
+	    return;
+        }
+
+	//if the input is used before, prevent it from sending to server
+	if( missed_char.includes(one_guess) || 
+        Object.values(guessed_correct_char).includes(one_guess)){
+            message_screen.append(
+            "<div>You guessed this before, choose another one </div>");
+ 	    return;
+        }
+
+	//send the input to server and store it in the guessed_correct_char with its index
+        $.getJSON("{{ url_for("cal_guess") }}", {
+   	guess_char : one_guess
+        }, function(data){
+
+	    //guess is missed
+	    if(data.length == 0){
+ 	        missed_char.push(one_guess);
+		updateGame();
+		return;
+ 	    }
+	    for(var i = 0; i < data.length; i++){
+	        guessed_correct_char[data[i].index] = data[i].ch;
+  	    }
+
+            //update the view of the game
+	    updateGame();
+        });
+    }
+    
+</script>
+{% endblock scripts %}
+{% block content %}
+  <div class="container">
+    <div class ="page-header">
+        <h1>Chong's Hangman Game</h1>
+    </div>
+  </div>
+
+  {% block game %}
+  <div class = "container" id="input_form">
+  </div>
+  <div class = "container" id="game">
+    <div class="form-group row col-xs-4 col-xs-offset-4">
+      Player Name: <input type="text" class="form-control" id="name" maxlength="20" required></input>
+      Password:<input type="password" class="form-control" id="password" required></input>
+      <button type="button" id="start" class="btn btn-success">Log In/Start</button>
+      <button type="button" id="signup" class="btn btn-success">Sign Up</button>
+      <div id="welcome_message">
+      </div>
+    </div>
+    </div>
+  </div>
+  <div class = "container" id="message_fixed">
+  </div>
+   <div class = "container" id="message">
+  </div> 
+   <div class = "container" id="message_input_char">
+  </div>
+  <div class = "container" id="img_hang">
+  </div>
+  {% endblock game %}
+{% endblock content %}
+
+
